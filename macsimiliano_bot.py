@@ -2,6 +2,8 @@
 import logging
 import os
 import requests
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -113,7 +115,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         sarcastic_response = await generate_sarcastic_response(user_message)
         await update.message.reply_text(sarcastic_response)
 
+# Server HTTP per mantenere il bot attivo
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_http_server():
+    port = int(os.environ.get("PORT", 8080)) # Usa la porta 8080 o quella specificata dall\'ambiente
+    server_address = ("0.0.0.0", port)
+    httpd = HTTPServer(server_address, HealthCheckHandler)
+    logging.info(f"Server HTTP in ascolto sulla porta {port}")
+    httpd.serve_forever()
+
 def main() -> None:
+    # Avvia il server HTTP in un thread separato
+    http_thread = threading.Thread(target=run_http_server)
+    http_thread.daemon = True # Il thread si chiuderà con il programma principale
+    http_thread.start()
+
     # Crea l\'applicazione e passa il token del bot
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -122,8 +144,8 @@ def main() -> None:
     application.add_handler(CommandHandler("image", image_command)) # Nuovo handler per il comando /image
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Avvia il bot (polling continuo)
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Avvia il bot (polling continuo), ignorando gli aggiornamenti pendenti al riavvio
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
